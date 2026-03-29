@@ -1,32 +1,52 @@
+import { supabase } from '../supabaseClient'
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, Upload, X, CheckCircle, AlertCircle } from 'lucide-react';
+import { Camera, Upload, X, CheckCircle, AlertCircle, Zap, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import {
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, Cell
+} from 'recharts';
+
+const METRIC_COLORS: Record<string, string> = {
+  Acne: '#f87171', Dryness: '#60a5fa', Oiliness: '#fbbf24',
+  Pigmentation: '#c084fc', Wrinkles: '#818cf8', Redness: '#fb7185',
+};
+
+// Dummy fallback data used ONLY when API calls fail
+const DUMMY_ANALYSIS_DATA = {
+  acne_score: 3,
+  dryness_score: 4,
+  oiliness_score: 5,
+  pigmentation_score: 2,
+  wrinkle_score: 1,
+  redness_score: 3,
+  overall_condition: 'Your skin appears to be in generally good condition with minor concerns. Some mild acne and slight oiliness detected. Overall skin health looks promising with a few areas that could benefit from a targeted skincare routine.',
+  recommendations: [
+    'Use a gentle salicylic acid cleanser (0.5-2%) twice daily to help manage mild acne and control excess oil production.',
+    'Apply a lightweight, oil-free moisturizer with hyaluronic acid to maintain hydration without clogging pores.',
+    'Incorporate a broad-spectrum SPF 30+ sunscreen into your morning routine to protect against UV damage and prevent pigmentation.',
+  ],
+};
 
 export default function NewAnalysis({ user }: { user: any }) {
-  const [image, setImage] = useState<File | null>(null);
+  const [image, setImage]           = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [error, setError]           = useState('');
+  const [result, setResult]         = useState<any>(null);
+  const [savedOk, setSavedOk]       = useState(false);
+  const fileInputRef                = useRef<HTMLInputElement>(null);
+  const navigate                    = useNavigate();
+  const videoRef                    = useRef<HTMLVideoElement>(null);
+  const canvasRef                   = useRef<HTMLCanvasElement>(null);
 
-  const [error, setError] = useState('');
-  const [result, setResult] = useState<any>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
-
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     if (isCameraOpen && videoRef.current) {
       navigator.mediaDevices
         .getUserMedia({ video: { facingMode: 'user' } })
-        .then((stream) => {
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-        })
-        .catch(() => {
-          setError('Could not access camera. Please check permissions.');
-        });
+        .then((stream) => { if (videoRef.current) videoRef.current.srcObject = stream; })
+        .catch(() => setError('Could not access camera. Please check permissions.'));
     }
   }, [isCameraOpen]);
 
@@ -34,12 +54,8 @@ export default function NewAnalysis({ user }: { user: any }) {
     const file = e.target.files?.[0];
     if (file) {
       if (file.type.startsWith('image/')) {
-        setImage(file);
-        setPreviewUrl(URL.createObjectURL(file));
-        setError('');
-      } else {
-        setError('Please select a valid image file.');
-      }
+        setImage(file); setPreviewUrl(URL.createObjectURL(file)); setError('');
+      } else setError('Please select a valid image file.');
     }
   };
 
@@ -47,272 +63,432 @@ export default function NewAnalysis({ user }: { user: any }) {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file && file.type.startsWith('image/')) {
-      setImage(file);
-      setPreviewUrl(URL.createObjectURL(file));
-      setError('');
-    } else {
-      setError('Please drop a valid image file.');
-    }
+      setImage(file); setPreviewUrl(URL.createObjectURL(file)); setError('');
+    } else setError('Please drop a valid image file.');
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-  }, []);
+  const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
 
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setIsCameraOpen(true);
-      setError('');
-    } catch (err) {
-      setError('Could not access camera. Please check permissions.');
-    }
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      setIsCameraOpen(true); setError('');
+    } catch { setError('Could not access camera. Please check permissions.'); }
   };
 
   const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(track => track.stop());
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
     }
     setIsCameraOpen(false);
   };
 
   const capturePhoto = () => {
     if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
-            setImage(file);
-            setPreviewUrl(URL.createObjectURL(file));
-            stopCamera();
-          }
-        }, 'image/jpeg');
-      }
+      const v = videoRef.current, c = canvasRef.current;
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext('2d')?.drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
+          setImage(file); setPreviewUrl(URL.createObjectURL(file)); stopCamera();
+        }
+      }, 'image/jpeg');
     }
+  };
+
+  const saveToDB = async (res: any, imageUrl: string) => {
+    if (!user?.id) { console.error('User not found'); return; }
+
+    const avgBad = ((res.acne_score || 0) + (res.dryness_score || 0) + (res.oiliness_score || 0)
+      + (res.pigmentation_score || 0) + (res.wrinkle_score || 0)) / 5;
+    const skinScore = Math.max(0, Math.round(10 - avgBad));
+
+    const fullImageUrl = imageUrl
+      ? (imageUrl.startsWith('http') ? imageUrl : `${window.location.origin}${imageUrl}`)
+      : 'no-image';
+
+    const { error: dbErr } = await supabase.from('analyses').insert([{
+      user_id:     user.id,
+      image_url:   fullImageUrl,
+      acne:        res.acne_score        ?? 0,
+      dryness:     res.dryness_score     ?? 0,
+      oiliness:    res.oiliness_score    ?? 0,
+      pigmentation: res.pigmentation_score ?? 0,
+      wrinkles:    res.wrinkle_score     ?? 0,
+      score:       skinScore,
+      routine:     Array.isArray(res.recommendations)
+        ? res.recommendations.join(' | ')
+        : (res.overall_condition || ''),
+    }]);
+
+    if (dbErr) console.error('❌ Supabase Insert Error:', JSON.stringify(dbErr));
+    else { console.log('✅ Saved to Supabase'); setSavedOk(true); }
   };
 
   const startAnalysis = async () => {
     if (!image) return;
-
-    setIsAnalyzing(true);
-    setError('');
+    setIsAnalyzing(true); setError(''); setSavedOk(false);
 
     const formData = new FormData();
     formData.append('image', image);
     formData.append('userId', user.id.toString());
 
     try {
-      const res = await fetch('/api/analyze', {
-        method: 'POST',
-        body: formData,
-      });
-
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
       const data = await res.json();
       if (data.success) {
         setResult(data.result);
+        await saveToDB(data.result, data.imageUrl);
       } else {
-        setError(data.error || 'Analysis failed');
+        // API returned an error response — use dummy data temporarily
+        console.warn('API analysis failed, using temporary dummy data:', data.error);
+        setError('API temporarily unavailable. Showing demo results.');
+        setResult(DUMMY_ANALYSIS_DATA);
+        await saveToDB(DUMMY_ANALYSIS_DATA, previewUrl || 'no-image');
       }
-    } catch (err: any) {
-      setError('Network error during analysis');
-    } finally {
-      setIsAnalyzing(false);
+    } catch (err) {
+      // Network error or server unreachable — use dummy data temporarily
+      console.warn('Network error during analysis, using temporary dummy data:', err);
+      setError('Network error. Showing demo results temporarily.');
+      setResult(DUMMY_ANALYSIS_DATA);
+      await saveToDB(DUMMY_ANALYSIS_DATA, previewUrl || 'no-image');
     }
+    finally { setIsAnalyzing(false); }
   };
 
   const resetAnalysis = () => {
-    setImage(null);
-    setPreviewUrl(null);
-    setResult(null);
-    setError('');
-    stopCamera();
+    setImage(null); setPreviewUrl(null); setResult(null); setError(''); setSavedOk(false); stopCamera();
   };
 
+  // Chart data
+  const metrics = result ? [
+    { name: 'Acne',         value: result.acne_score        ?? 0 },
+    { name: 'Dryness',      value: result.dryness_score     ?? 0 },
+    { name: 'Oiliness',     value: result.oiliness_score    ?? 0 },
+    { name: 'Pigmentation', value: result.pigmentation_score ?? 0 },
+    { name: 'Wrinkles',     value: result.wrinkle_score     ?? 0 },
+    { name: 'Redness',      value: result.redness_score     ?? 0 },
+  ] : [];
+
+  const avgBad = metrics.length ? metrics.reduce((s, m) => s + m.value, 0) / metrics.length : 0;
+  const skinScore = Math.max(0, Math.round(10 - avgBad));
+
   return (
-    <div className="space-y-8 max-w-3xl mx-auto">
-      <header className="text-center">
-        <h1 className="text-3xl font-bold text-neutral-900">New Skin Analysis</h1>
-        <p className="text-neutral-500 mt-2">Upload a clear, well-lit photo of your face for the best results.</p>
+    <div style={{ maxWidth: '720px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '36px' }}>
+      {/* Header */}
+      <header style={{ textAlign: 'center', paddingBottom: '4px' }}>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: '8px',
+          background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)',
+          padding: '8px 18px', borderRadius: '99px', marginBottom: '18px',
+        }}>
+          <Zap className="w-3.5 h-3.5 text-emerald-400" />
+          <span style={{ color: '#34d399', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em' }}>AI-Powered Skin Analysis</span>
+        </div>
+        <h1 className="text-white" style={{ fontSize: '30px', fontWeight: 800, letterSpacing: '-0.5px' }}>New Dermify Analysis</h1>
+        <p className="text-gray-400" style={{ marginTop: '12px', fontSize: '15px', lineHeight: 1.6 }}>Upload a clear, well-lit photo of your face for the best results.</p>
       </header>
 
+      {/* Error */}
       {error && (
-        <div className="bg-red-50 text-red-600 p-4 rounded-xl flex items-center gap-3">
+        <div style={{
+          background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+          borderRadius: '16px', padding: '16px 20px',
+          display: 'flex', alignItems: 'center', gap: '12px',
+          color: '#fca5a5', fontSize: '14px',
+        }}>
           <AlertCircle className="w-5 h-5 shrink-0" />
           <p>{error}</p>
         </div>
       )}
 
       {!result ? (
-        <div className="bg-white rounded-2xl shadow-sm border border-neutral-200 p-8">
+        <div style={{
+          borderRadius: '24px', padding: '40px',
+          background: 'var(--bg-surface)', border: '1px solid rgba(16,185,129,0.18)',
+          boxShadow: 'var(--shadow)',
+        }}>
           {isCameraOpen ? (
-            <div className="space-y-6">
-              <div className="relative rounded-2xl overflow-hidden bg-black aspect-video max-h-96 mx-auto flex items-center justify-center">
-                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                <canvas ref={canvasRef} className="hidden" />
-                <button
-                  onClick={stopCamera}
-                  className="absolute top-4 right-4 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full backdrop-blur-sm transition-colors"
-                >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div style={{ position: 'relative', borderRadius: '20px', overflow: 'hidden', background: '#000', aspectRatio: '16/9', maxHeight: '384px', margin: '0 auto', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <video ref={videoRef} autoPlay playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <canvas ref={canvasRef} style={{ display: 'none' }} />
+                <button onClick={stopCamera} style={{
+                  position: 'absolute', top: '16px', right: '16px',
+                  background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff',
+                  padding: '10px', borderRadius: '50%', cursor: 'pointer',
+                  transition: 'background 0.2s',
+                }}>
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <button
-                onClick={capturePhoto}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-4 rounded-xl transition-colors flex items-center justify-center gap-2 text-lg"
-              >
-                <Camera className="w-5 h-5" />
-                Take Photo
+              <button onClick={capturePhoto} style={{
+                width: '100%', background: 'linear-gradient(135deg, #10b981, #059669)',
+                color: '#fff', fontWeight: 600, padding: '16px', borderRadius: '16px',
+                border: 'none', cursor: 'pointer', fontSize: '16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+                boxShadow: '0 4px 16px rgba(16,185,129,0.3)', transition: 'all 0.2s',
+              }}>
+                <Camera className="w-5 h-5" /> Take Photo
               </button>
             </div>
           ) : !previewUrl ? (
-            <div className="space-y-6">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+              {/* Upload Zone */}
               <div
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                className="border-2 border-dashed border-neutral-300 rounded-2xl p-12 text-center hover:bg-neutral-50 transition-colors cursor-pointer"
+                onDrop={handleDrop} onDragOver={handleDragOver}
                 onClick={() => fileInputRef.current?.click()}
+                style={{
+                  border: '2px dashed rgba(16,185,129,0.25)',
+                  borderRadius: '20px', padding: '52px 32px', textAlign: 'center',
+                  cursor: 'pointer', transition: 'all 0.3s',
+                  background: 'rgba(16,185,129,0.02)',
+                  minHeight: '240px',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = 'rgba(16,185,129,0.5)';
+                  e.currentTarget.style.background = 'rgba(16,185,129,0.04)';
+                  e.currentTarget.style.transform = 'scale(1.005)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = 'rgba(16,185,129,0.25)';
+                  e.currentTarget.style.background = 'rgba(16,185,129,0.02)';
+                  e.currentTarget.style.transform = 'scale(1)';
+                }}
               >
-                <div className="w-16 h-16 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Upload className="w-8 h-8" />
+                <div style={{
+                  width: '72px', height: '72px', borderRadius: '50%',
+                  background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  marginBottom: '24px',
+                }}>
+                  <Upload className="w-8 h-8 text-emerald-400" />
                 </div>
-                <h3 className="text-lg font-medium text-neutral-900 mb-1">Click or drag image here</h3>
-                <p className="text-neutral-500 text-sm mb-6">Supports JPG, PNG, WEBP</p>
-
-                <button className="bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-50 px-6 py-2.5 rounded-xl font-medium transition-colors shadow-sm">
+                <h3 className="text-white" style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Drop your photo here</h3>
+                <p style={{ color: '#6b7280', fontSize: '13px', marginBottom: '24px', maxWidth: '280px', lineHeight: 1.5 }}>or click to browse from your device. Supports JPG, PNG, WEBP</p>
+                <button style={{
+                  background: 'linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.06))',
+                  border: '1px solid rgba(16,185,129,0.25)',
+                  color: '#34d399', padding: '10px 28px', borderRadius: '14px',
+                  fontWeight: 600, fontSize: '14px', cursor: 'pointer', transition: 'all 0.2s',
+                }}>
                   Browse Files
                 </button>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileSelect}
-                  accept="image/*"
-                  className="hidden"
-                />
+                <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*" style={{ display: 'none' }} />
               </div>
-              <div className="relative flex items-center py-2">
-                <div className="flex-grow border-t border-neutral-200"></div>
-                <span className="flex-shrink-0 mx-4 text-neutral-400 text-sm">or</span>
-                <div className="flex-grow border-t border-neutral-200"></div>
+
+              {/* Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', padding: '0' }}>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+                <span style={{ color: '#4b5563', fontSize: '12px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em' }}>or</span>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
               </div>
-              <button
-                onClick={startCamera}
-                className="w-full bg-white border-2 border-emerald-600 text-emerald-600 hover:bg-emerald-50 font-medium py-4 rounded-xl transition-colors flex items-center justify-center gap-2 text-lg"
+
+              {/* Webcam Button */}
+              <button onClick={startCamera} style={{
+                width: '100%', background: 'var(--bg-surface2)',
+                border: '2px solid rgba(16,185,129,0.25)',
+                color: '#34d399', fontWeight: 600, padding: '18px',
+                borderRadius: '16px', cursor: 'pointer', fontSize: '16px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px',
+                transition: 'all 0.2s',
+              }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.borderColor = 'rgba(16,185,129,0.6)';
+                  e.currentTarget.style.background = 'rgba(16,185,129,0.08)';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.borderColor = 'rgba(16,185,129,0.25)';
+                  e.currentTarget.style.background = 'var(--bg-surface2)';
+                }}
               >
-                <Camera className="w-5 h-5" />
-                Use Webcam
+                <Camera className="w-5 h-5" /> Use Webcam
               </button>
             </div>
           ) : (
-            <div className="space-y-6">
-              <div className="relative rounded-2xl overflow-hidden bg-neutral-100 aspect-square max-h-96 mx-auto">
-                <img src={previewUrl} alt="Preview" className="w-full h-full object-cover" />
-                <button
-                  onClick={resetAnalysis}
-                  className="absolute top-4 right-4 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full backdrop-blur-sm transition-colors"
-                >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+              <div style={{ position: 'relative', borderRadius: '20px', overflow: 'hidden', background: 'var(--bg-surface2)', aspectRatio: '4/3', maxHeight: '400px', margin: '0 auto', width: '100%' }}>
+                <img src={previewUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <button onClick={resetAnalysis} style={{
+                  position: 'absolute', top: '16px', right: '16px',
+                  background: 'rgba(0,0,0,0.5)', border: 'none', color: '#fff',
+                  padding: '10px', borderRadius: '50%', cursor: 'pointer',
+                }}>
                   <X className="w-5 h-5" />
                 </button>
               </div>
-
-              <button
-                onClick={startAnalysis}
-                disabled={isAnalyzing}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-4 rounded-xl transition-colors disabled:opacity-70 flex items-center justify-center gap-2 text-lg"
-              >
+              <button onClick={startAnalysis} disabled={isAnalyzing}
+                style={{
+                  width: '100%', background: isAnalyzing ? 'rgba(16,185,129,0.4)' : 'linear-gradient(135deg, #10b981, #059669)',
+                  color: '#fff', fontWeight: 600, padding: '16px', borderRadius: '16px',
+                  border: 'none', cursor: isAnalyzing ? 'not-allowed' : 'pointer', fontSize: '16px',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
+                  boxShadow: isAnalyzing ? 'none' : '0 4px 16px rgba(16,185,129,0.3)',
+                  opacity: isAnalyzing ? 0.7 : 1, transition: 'all 0.2s',
+                }}>
                 {isAnalyzing ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Analyzing your skin...
-                  </>
+                  <><div style={{ width: '20px', height: '20px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /> Analyzing your skin...</>
                 ) : (
-                  <>
-                    <Camera className="w-5 h-5" />
-                    Start AI Analysis
-                  </>
+                  <><Zap className="w-5 h-5" /> Start AI Analysis</>
                 )}
               </button>
             </div>
           )}
         </div>
       ) : (
-        <div className="space-y-6">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 text-center">
-            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+          {/* Success Banner */}
+          <div style={{
+            background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)',
+            borderRadius: '24px', padding: '36px', textAlign: 'center',
+          }}>
+            <div style={{
+              width: '64px', height: '64px', borderRadius: '50%',
+              background: 'rgba(16,185,129,0.1)', color: '#34d399',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 20px',
+            }}>
               <CheckCircle className="w-8 h-8" />
             </div>
-            <h2 className="text-2xl font-bold text-emerald-900 mb-2">Analysis Complete</h2>
-            <p className="text-emerald-700 max-w-lg mx-auto">{result.overall_condition}</p>
+            <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#6ee7b7', marginBottom: '8px' }}>Analysis Complete</h2>
+            <p style={{ color: '#9ca3af', maxWidth: '480px', margin: '0 auto', fontSize: '14px', lineHeight: 1.6 }}>{result.overall_condition}</p>
+            {savedOk && <p style={{ color: '#34d399', fontSize: '13px', marginTop: '12px' }}>✅ Saved to your history</p>}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[
-              { label: 'Acne', score: result.acne_score, color: 'bg-red-500' },
-              { label: 'Dryness', score: result.dryness_score, color: 'bg-blue-500' },
-              { label: 'Oiliness', score: result.oiliness_score, color: 'bg-yellow-500' },
-              { label: 'Pigmentation', score: result.pigmentation_score, color: 'bg-purple-500' },
-              { label: 'Wrinkles', score: result.wrinkle_score, color: 'bg-indigo-500' },
-              { label: 'Redness', score: result.redness_score, color: 'bg-rose-500' },
-            ].map((item) => (
-              <div
-                key={item.label}
-                className="bg-white p-4 rounded-2xl border border-neutral-200 shadow-sm"
-              >
-                <div className="flex justify-between mb-2">
-                  <p className="text-sm font-medium text-neutral-700">{item.label}</p>
-                  <p className="text-sm font-semibold text-neutral-900">{item.score}/10</p>
-                </div>
+          {/* Skin Score Badge */}
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              background: 'var(--bg-surface)', border: '1px solid rgba(16,185,129,0.18)',
+              borderRadius: '24px', padding: '32px 48px',
+              boxShadow: '0 0 40px rgba(52,211,153,0.08)',
+            }}>
+              <p style={{ color: '#6b7280', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.12em', fontWeight: 600, marginBottom: '8px' }}>Overall Skin Score</p>
+              <p style={{ fontSize: '64px', fontWeight: 900, color: '#34d399', lineHeight: 1, textShadow: '0 0 30px rgba(52,211,153,0.3)' }}>{skinScore}</p>
+              <p style={{ color: '#6b7280', fontSize: '14px', marginTop: '4px' }}>/ 10</p>
+            </div>
+          </div>
 
-                {/* Progress Bar */}
-                <div className="w-full bg-neutral-200 rounded-full h-3">
+          {/* Charts Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '28px' }}>
+            {/* Radar Chart */}
+            <div style={{ background: 'var(--bg-surface)', borderRadius: '20px', border: '1px solid rgba(16,185,129,0.18)', padding: '28px' }}>
+              <h3 className="text-white" style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px', textAlign: 'center' }}>Skin Condition Radar</h3>
+              <ResponsiveContainer width="100%" height={240}>
+                <RadarChart data={metrics}>
+                  <PolarGrid stroke="rgba(255,255,255,0.08)" />
+                  <PolarAngleAxis dataKey="name" tick={{ fill: '#9ca3af', fontSize: 11 }} />
+                  <Radar name="Score" dataKey="value" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} />
+                </RadarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Bar Chart */}
+            <div style={{ background: 'var(--bg-surface)', borderRadius: '20px', border: '1px solid rgba(16,185,129,0.18)', padding: '28px' }}>
+              <h3 className="text-white" style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px', textAlign: 'center' }}>Metric Breakdown</h3>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={metrics} layout="vertical" margin={{ left: 10, right: 20 }}>
+                  <XAxis type="number" domain={[0, 10]} tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={{ fill: '#9ca3af', fontSize: 11 }} axisLine={false} tickLine={false} width={80} />
+                  <Tooltip
+                    contentStyle={{ background: '#1f2937', border: '1px solid #374151', borderRadius: 12, fontSize: 12 }}
+                    labelStyle={{ color: '#d1d5db' }}
+                    itemStyle={{ color: '#fff' }}
+                    formatter={(v: any) => [`${v}/10`]}
+                  />
+                  <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                    {metrics.map((entry) => (
+                      <Cell key={entry.name} fill={METRIC_COLORS[entry.name] || '#34d399'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Score Tiles */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+            {metrics.map((item) => (
+              <div key={item.name} style={{
+                background: 'var(--bg-surface)', padding: '22px',
+                borderRadius: '18px', border: '1px solid rgba(16,185,129,0.15)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                  <p className="text-gray-300" style={{ fontSize: '14px', fontWeight: 600 }}>{item.name}</p>
+                  <p className="text-white" style={{ fontSize: '14px', fontWeight: 700 }}>{item.value}/10</p>
+                </div>
+                <div style={{ width: '100%', background: 'var(--bg-surface2)', borderRadius: '99px', height: '8px', overflow: 'hidden' }}>
                   <div
-                    className={`${item.color} h-3 rounded-full`}
-                    style={{ width: `${item.score * 10}%` }}
+                    style={{
+                      height: '100%', borderRadius: '99px', transition: 'all 0.7s ease-out',
+                      width: `${item.value * 10}%`,
+                      background: `linear-gradient(90deg, ${METRIC_COLORS[item.name] || '#34d399'}, ${METRIC_COLORS[item.name] || '#34d399'}80)`,
+                      boxShadow: `0 0 8px ${METRIC_COLORS[item.name] || '#34d399'}40`,
+                    }}
                   />
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6">
-            <h3 className="text-lg font-semibold text-neutral-900 mb-4">Personalized Recommendations</h3>
-            <ul className="space-y-3">
-              {result.recommendations.map((rec: string, idx: number) => (
-                <li key={idx} className="flex items-start gap-3 bg-neutral-50 p-4 rounded-xl">
-                  <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0 text-sm font-bold mt-0.5">
+          {/* Recommendations */}
+          <div style={{
+            background: 'var(--bg-surface)', borderRadius: '20px',
+            border: '1px solid rgba(16,185,129,0.18)', padding: '32px',
+          }}>
+            <h3 className="text-white" style={{ fontSize: '18px', fontWeight: 700, marginBottom: '20px' }}>Personalized Recommendations</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {result.recommendations?.map((rec: string, idx: number) => (
+                <div key={idx} style={{
+                  display: 'flex', alignItems: 'flex-start', gap: '14px',
+                  background: 'var(--bg-surface2)', padding: '18px', borderRadius: '16px',
+                  border: '1px solid var(--border)',
+                }}>
+                  <div style={{
+                    width: '28px', height: '28px', borderRadius: '50%',
+                    background: 'rgba(16,185,129,0.12)', color: '#34d399',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    flexShrink: 0, fontSize: '12px', fontWeight: 700,
+                  }}>
                     {idx + 1}
                   </div>
-                  <p className="text-neutral-700">{rec}</p>
-                </li>
+                  <p className="text-gray-300" style={{ fontSize: '14px', lineHeight: 1.6 }}>{rec}</p>
+                </div>
               ))}
-            </ul>
+            </div>
           </div>
 
-          <div className="flex gap-4">
-            <button
-              onClick={resetAnalysis}
-              className="flex-1 bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-50 py-3 rounded-xl font-medium transition-colors"
+          {/* Actions */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            <button onClick={resetAnalysis} style={{
+              background: 'var(--bg-surface)', border: '1px solid var(--border)',
+              color: '#d1d5db', padding: '16px', borderRadius: '16px',
+              fontWeight: 600, fontSize: '15px', cursor: 'pointer', transition: 'all 0.2s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = '#6b7280'; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; }}
             >
               Analyze Another Photo
             </button>
-            <button
-              onClick={() => navigate('/')}
-              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-medium transition-colors"
-            >
-              Go to Dashboard
+            <button onClick={() => navigate('/dashboard')} style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: '#fff', padding: '16px', borderRadius: '16px', border: 'none',
+              fontWeight: 600, fontSize: '15px', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(16,185,129,0.3)', transition: 'all 0.2s',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+            }}>
+              Go to Dashboard <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }

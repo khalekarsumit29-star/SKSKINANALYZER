@@ -14,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(cors());
 app.use(express.json());
@@ -126,7 +126,7 @@ app.get('/api/users/:id', (req, res) => {
 // 2. Image Upload and AI Analysis
 app.post('/api/analyze', upload.single('image'), async (req, res) => {
   try {
-    const userId = req.body.userId;
+    const userId = req.body.userId || null; // UUID string from Supabase Auth
     if (!req.file) {
       return res.status(400).json({ error: 'No image uploaded' });
     }
@@ -182,33 +182,35 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     });
 
     const analysisResult = JSON.parse(response.text || '{}');
-    
-    // Save to database
-    const stmt = db.prepare(`
-      INSERT INTO analyses 
-      (user_id, date, image_path, acne_score, dryness_score, oiliness_score, pigmentation_score, wrinkle_score, redness_score, overall_condition, recommendations) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    
-    const info = stmt.run(
-      userId,
-      new Date().toISOString(),
-      `/uploads/${req.file.filename}`,
-      analysisResult.acne_score,
-      analysisResult.dryness_score,
-      analysisResult.oiliness_score,
-      analysisResult.pigmentation_score,
-      analysisResult.wrinkle_score,
-      analysisResult.redness_score,
-      analysisResult.overall_condition,
-      JSON.stringify(analysisResult.recommendations)
-    );
+
+    // Save to local SQLite as a backup (primary save done by frontend to Supabase)
+    try {
+      const stmt = db.prepare(`
+        INSERT INTO analyses 
+        (user_id, date, image_path, acne_score, dryness_score, oiliness_score, pigmentation_score, wrinkle_score, redness_score, overall_condition, recommendations) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      stmt.run(
+        userId || 0,
+        new Date().toISOString(),
+        `/uploads/${req.file!.filename}`,
+        analysisResult.acne_score,
+        analysisResult.dryness_score,
+        analysisResult.oiliness_score,
+        analysisResult.pigmentation_score,
+        analysisResult.wrinkle_score,
+        analysisResult.redness_score,
+        analysisResult.overall_condition,
+        JSON.stringify(analysisResult.recommendations)
+      );
+    } catch (sqliteErr) {
+      console.warn('SQLite backup save failed (non-critical):', sqliteErr);
+    }
 
     res.json({
       success: true,
-      analysisId: info.lastInsertRowid,
       result: analysisResult,
-      imageUrl: `/uploads/${req.file.filename}`
+      imageUrl: `/uploads/${req.file!.filename}`
     });
 
   } catch (error: any) {
@@ -219,13 +221,24 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
 
 // 3. Get Analysis History
 app.get('/api/users/:id/history', (req, res) => {
-  const history = db.prepare('SELECT * FROM analyses WHERE user_id = ? ORDER BY date DESC').all(req.params.id);
-  // Parse recommendations back to array
-  const parsedHistory = history.map((record: any) => ({
-    ...record,
-    recommendations: JSON.parse(record.recommendations || '[]')
-  }));
-  res.json(parsedHistory);
+  try {
+    const userId = req.params.id;
+    const history = db.prepare(`
+      SELECT * FROM analyses 
+      WHERE user_id = ? 
+      ORDER BY date DESC
+    `).all(userId);
+
+    const parsedHistory = history.map((record: any) => ({
+      ...record,
+      recommendations: JSON.parse(record.recommendations || '[]')
+    }));
+
+    res.json(parsedHistory);
+
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // 4. Get Product Recommendations based on skin type
@@ -239,6 +252,9 @@ app.get('/api/products/recommend', (req, res) => {
   }
   res.json(products);
 });
+
+
+
 
 
 async function startServer() {

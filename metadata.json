@@ -1,5 +1,5 @@
 {
-  "name": "SkinAnalyzer AI",
+  "name": "Dermify AI",
   "description": "An AI-powered skincare assistant that analyzes facial images to detect skin conditions and provide personalized recommendations.",
   "requestFramePermissions": ["camera"]
 }
