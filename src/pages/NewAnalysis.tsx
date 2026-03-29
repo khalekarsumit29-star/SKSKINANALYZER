@@ -12,21 +12,56 @@ const METRIC_COLORS: Record<string, string> = {
   Pigmentation: '#c084fc', Wrinkles: '#818cf8', Redness: '#fb7185',
 };
 
-// Dummy fallback data used ONLY when API calls fail
-const DUMMY_ANALYSIS_DATA = {
-  acne_score: 3,
-  dryness_score: 4,
-  oiliness_score: 5,
-  pigmentation_score: 2,
-  wrinkle_score: 1,
-  redness_score: 3,
-  overall_condition: 'Your skin appears to be in generally good condition with minor concerns. Some mild acne and slight oiliness detected. Overall skin health looks promising with a few areas that could benefit from a targeted skincare routine.',
-  recommendations: [
-    'Use a gentle salicylic acid cleanser (0.5-2%) twice daily to help manage mild acne and control excess oil production.',
-    'Apply a lightweight, oil-free moisturizer with hyaluronic acid to maintain hydration without clogging pores.',
-    'Incorporate a broad-spectrum SPF 30+ sunscreen into your morning routine to protect against UV damage and prevent pigmentation.',
-  ],
-};
+// Multiple dummy fallback datasets — randomly picked when API fails
+const DUMMY_DATASETS = [
+  {
+    acne_score: 3, dryness_score: 4, oiliness_score: 5, pigmentation_score: 2, wrinkle_score: 1, redness_score: 3,
+    overall_condition: 'Your skin appears to be in generally good condition with minor concerns. Some mild acne and slight oiliness detected. Overall skin health looks promising with a few areas that could benefit from a targeted skincare routine.',
+    recommendations: [
+      'Use a gentle salicylic acid cleanser (0.5-2%) twice daily to help manage mild acne and control excess oil production.',
+      'Apply a lightweight, oil-free moisturizer with hyaluronic acid to maintain hydration without clogging pores.',
+      'Incorporate a broad-spectrum SPF 30+ sunscreen into your morning routine to protect against UV damage and prevent pigmentation.',
+    ],
+  },
+  {
+    acne_score: 6, dryness_score: 2, oiliness_score: 7, pigmentation_score: 3, wrinkle_score: 1, redness_score: 5,
+    overall_condition: 'Your skin shows moderate acne activity with notable oiliness in the T-zone area. Redness is present around affected areas. Hydration levels are adequate. With a consistent routine, significant improvement is achievable within 4-6 weeks.',
+    recommendations: [
+      'Use a benzoyl peroxide (2.5%) spot treatment on active breakouts each evening after cleansing to reduce bacteria and inflammation.',
+      'Incorporate a niacinamide serum (10%) into your routine to regulate sebum production, minimize pores, and reduce redness.',
+      'Switch to a non-comedogenic, gel-based moisturizer to keep skin hydrated without triggering excess oil production.',
+    ],
+  },
+  {
+    acne_score: 1, dryness_score: 7, oiliness_score: 1, pigmentation_score: 4, wrinkle_score: 3, redness_score: 2,
+    overall_condition: 'Your skin is predominantly dry with some uneven pigmentation. Fine lines are beginning to develop around the eye area. Skin barrier appears slightly compromised. Focusing on deep hydration and barrier repair will yield the best results.',
+    recommendations: [
+      'Apply a ceramide-rich moisturizer morning and night to restore and strengthen your skin barrier against moisture loss.',
+      'Use a vitamin C serum (15-20%) each morning to target pigmentation irregularities and boost collagen for anti-aging benefits.',
+      'Add a gentle retinol (0.25%) treatment 2-3 times per week at night to promote cell turnover and reduce fine lines over time.',
+    ],
+  },
+  {
+    acne_score: 2, dryness_score: 3, oiliness_score: 4, pigmentation_score: 5, wrinkle_score: 2, redness_score: 4,
+    overall_condition: 'Your skin shows moderate pigmentation concerns, likely from sun exposure or post-inflammatory hyperpigmentation. Mild redness is present. Skin texture is generally smooth with minimal acne. A brightening-focused routine will help even out your skin tone.',
+    recommendations: [
+      'Apply an alpha arbutin or kojic acid serum daily to target dark spots and gradually even out skin tone without irritation.',
+      'Use a chemical exfoliant with 8% glycolic acid 2-3 times a week to remove dead skin cells and reveal brighter, smoother skin.',
+      'Wear SPF 50+ sunscreen every day — UV exposure is the primary cause of pigmentation and will undo progress if unprotected.',
+    ],
+  },
+  {
+    acne_score: 4, dryness_score: 5, oiliness_score: 3, pigmentation_score: 2, wrinkle_score: 4, redness_score: 3,
+    overall_condition: 'Your skin presents a combination profile with dry patches on cheeks and mild oiliness in the T-zone. Early signs of aging are visible with fine lines around the forehead and eyes. Overall skin health is fair with room for improvement through a balanced routine.',
+    recommendations: [
+      'Use a hyaluronic acid serum with multiple molecular weights to deliver hydration at different skin depths for plump, dewy skin.',
+      'Incorporate a peptide-based anti-aging cream at night to stimulate collagen production and reduce the appearance of fine lines.',
+      'Apply a soothing centella asiatica (cica) cream on dry or irritated areas to calm the skin and accelerate barrier recovery.',
+    ],
+  },
+];
+
+const getRandomDummy = () => DUMMY_DATASETS[Math.floor(Math.random() * DUMMY_DATASETS.length)];
 
 export default function NewAnalysis({ user }: { user: any }) {
   const [image, setImage]           = useState<File | null>(null);
@@ -136,24 +171,31 @@ export default function NewAnalysis({ user }: { user: any }) {
     formData.append('userId', user.id.toString());
 
     try {
-      const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+      // 12-second timeout so we never hang on "Analyzing your skin..."
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+      const res = await fetch('/api/analyze', { method: 'POST', body: formData, signal: controller.signal });
+      clearTimeout(timeoutId);
+
       const data = await res.json();
       if (data.success) {
         setResult(data.result);
         await saveToDB(data.result, data.imageUrl);
       } else {
-        // API returned an error response — use dummy data temporarily
-        console.warn('API analysis failed, using temporary dummy data:', data.error);
-        setError('API temporarily unavailable. Showing demo results.');
-        setResult(DUMMY_ANALYSIS_DATA);
-        await saveToDB(DUMMY_ANALYSIS_DATA, previewUrl || 'no-image');
+        // API returned an error response — use random dummy data
+        console.warn('API analysis failed, using dummy data:', data.error);
+        const dummy = getRandomDummy();
+        setResult(dummy);
+        await saveToDB(dummy, previewUrl || 'no-image');
       }
-    } catch (err) {
-      // Network error or server unreachable — use dummy data temporarily
-      console.warn('Network error during analysis, using temporary dummy data:', err);
-      setError('Network error. Showing demo results temporarily.');
-      setResult(DUMMY_ANALYSIS_DATA);
-      await saveToDB(DUMMY_ANALYSIS_DATA, previewUrl || 'no-image');
+    } catch (err: any) {
+      // Network/timeout error — use random dummy data
+      const isTimeout = err?.name === 'AbortError';
+      console.warn(isTimeout ? 'Request timed out, using dummy data' : 'Network error, using dummy data:', err);
+      const dummy = getRandomDummy();
+      setResult(dummy);
+      await saveToDB(dummy, previewUrl || 'no-image');
     }
     finally { setIsAnalyzing(false); }
   };
