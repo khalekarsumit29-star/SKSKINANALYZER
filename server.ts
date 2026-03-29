@@ -144,7 +144,7 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
 
     // Retry helper for transient 429 rate-limit errors with model fallback
     const callWithRetry = async (maxRetries = 5) => {
-      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite'];
       
       for (const model of models) {
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
