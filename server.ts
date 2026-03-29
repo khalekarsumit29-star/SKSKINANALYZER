@@ -142,44 +142,78 @@ app.post('/api/analyze', upload.single('image'), async (req, res) => {
     }
     const ai = new GoogleGenAI({ apiKey });
 
-    // Call Gemini to analyze the skin
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              data: imageBytes,
-              mimeType: mimeType
+    // Retry helper for transient 429 rate-limit errors with model fallback
+    const callWithRetry = async (maxRetries = 5) => {
+      const models = ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'];
+      
+      for (const model of models) {
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            // Small initial delay to stagger requests and reduce 429s
+            if (attempt > 0) {
+              const delay = Math.pow(2, attempt) * 3000; // 3s, 6s, 12s, 24s, 48s
+              console.warn(`Rate limited. Retrying with model ${model} in ${delay / 1000}s... (attempt ${attempt + 1}/${maxRetries})`);
+              await new Promise(r => setTimeout(r, delay));
             }
-          },
-          {
-            text: 'Analyze this facial image for skin conditions. Provide a score from 0 to 10 for each of the following: acne, dryness, oiliness, pigmentation, wrinkles, and redness (0 is none/perfect, 10 is severe). Also provide an overall condition summary and 3 specific skincare recommendations. Return the result as JSON.'
+            
+            const response = await ai.models.generateContent({
+              model: model,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      data: imageBytes,
+                      mimeType: mimeType
+                    }
+                  },
+                  {
+                    text: 'Analyze this facial image for skin conditions. Provide a score from 0 to 10 for each of the following: acne, dryness, oiliness, pigmentation, wrinkles, and redness (0 is none/perfect, 10 is severe). Also provide an overall condition summary and 3 specific skincare recommendations. Return the result as JSON.'
+                  }
+                ]
+              },
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    acne_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    dryness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    oiliness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    pigmentation_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    wrinkle_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    redness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
+                    overall_condition: { type: Type.STRING, description: 'Brief summary of overall skin condition' },
+                    recommendations: {
+                      type: Type.ARRAY,
+                      items: { type: Type.STRING },
+                      description: 'List of 3 specific skincare recommendations'
+                    }
+                  },
+                  required: ['acne_score', 'dryness_score', 'oiliness_score', 'pigmentation_score', 'wrinkle_score', 'redness_score', 'overall_condition', 'recommendations']
+                }
+              }
+            });
+            console.log(`✅ Gemini API call succeeded with model: ${model}`);
+            return response;
+          } catch (err: any) {
+            const status = err?.status || err?.httpStatusCode || err?.code;
+            const isRateLimit = status === 429 || String(err?.message).includes('429') || String(err?.message).includes('Too Many Requests') || String(err?.message).includes('RESOURCE_EXHAUSTED');
+            if (isRateLimit && attempt < maxRetries) {
+              continue;
+            }
+            if (isRateLimit) {
+              console.warn(`All retries exhausted for model ${model}, trying next model...`);
+              break; // Try next model
+            }
+            throw err;
           }
-        ]
-      },
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            acne_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            dryness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            oiliness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            pigmentation_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            wrinkle_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            redness_score: { type: Type.INTEGER, description: 'Score from 0 to 10' },
-            overall_condition: { type: Type.STRING, description: 'Brief summary of overall skin condition' },
-            recommendations: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING },
-              description: 'List of 3 specific skincare recommendations'
-            }
-          },
-          required: ['acne_score', 'dryness_score', 'oiliness_score', 'pigmentation_score', 'wrinkle_score', 'redness_score', 'overall_condition', 'recommendations']
         }
       }
-    });
+      throw new Error('All models and retries exhausted. API quota exceeded.');
+    };
+
+    // Call Gemini with retry logic
+    const response = await callWithRetry();
 
     const analysisResult = JSON.parse(response.text || '{}');
 

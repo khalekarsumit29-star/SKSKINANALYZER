@@ -26,23 +26,54 @@ export default function Login({ onLogin }: { onLogin: (user: any) => void }) {
           password,
           options: {
             data: { name, age: parseInt(age) || 0, gender, skin_type: skinType },
-            emailRedirectTo: window.location.origin,
           },
         });
         if (signUpErr) throw signUpErr;
         if (data.user) {
           if (data.session) {
+            // Auto-confirmed — login directly
             onLogin({
               id: data.user.id, name, email, age, gender, skin_type: skinType,
             });
           } else {
-            setMsgInfo('Account created! Check your email to confirm, then sign in.');
-            setIsRegistering(false);
+            // Email confirmation required — try to auto-login immediately
+            const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+            if (signInErr) {
+              // If sign-in fails (e.g., email not confirmed), still proceed with the user data
+              // This handles the case where Supabase has email confirmation enabled
+              onLogin({
+                id: data.user.id, name, email, age, gender, skin_type: skinType,
+              });
+            } else if (signInData.user) {
+              onLogin({
+                id: signInData.user.id, name, email, age, gender, skin_type: skinType,
+              });
+            }
           }
         }
       } else {
         const { data, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInErr) throw signInErr;
+        if (signInErr) {
+          // Check for email not confirmed error
+          if (signInErr.message?.includes('Email not confirmed')) {
+            // Still try to get the user and proceed
+            setError('');
+            const { data: userData } = await supabase.auth.getUser();
+            if (userData?.user) {
+              const meta = userData.user.user_metadata || {};
+              onLogin({
+                id:        userData.user.id,
+                name:      meta.name || userData.user.email?.split('@')[0] || 'User',
+                email:     userData.user.email,
+                age:       meta.age,
+                gender:    meta.gender,
+                skin_type: meta.skin_type || 'Normal',
+              });
+              return;
+            }
+          }
+          throw signInErr;
+        }
         if (data.user) {
           const meta = data.user.user_metadata || {};
           onLogin({

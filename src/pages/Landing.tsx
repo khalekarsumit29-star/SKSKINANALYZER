@@ -47,8 +47,8 @@ export default function Landing() {
   ];
 
   const testimonials = [
-    { name: 'Ananya S.', role: 'Skincare Enthusiast', text: '"Dermify AI completely transformed my skincare routine. The analysis was spot-on and the product recommendations actually worked!"', rating: 5, avatar: 'A' },
-    { name: 'Rahul M.', role: 'First-time User', text: '"I had no idea about my skin type before using this. The analysis explained everything so clearly. Highly recommended!"', rating: 5, avatar: 'R' },
+    { name: 'Eshwari K', role: 'Skincare Enthusiast', text: '"Dermify AI completely transformed my skincare routine. The analysis was spot-on and the product recommendations actually worked!"', rating: 5, avatar: 'E' },
+    { name: 'Aishwarya Rai', role: 'First-time User', text: '"I had no idea about my skin type before using this. The analysis explained everything so clearly. Highly recommended!"', rating: 5, avatar: 'A' },
     { name: 'Priya K.', role: 'Beauty Blogger', text: '"The progress tracking feature is amazing. I can visually see how my skin has improved over the past 3 months."', rating: 5, avatar: 'P' },
   ];
 
@@ -533,7 +533,7 @@ export default function Landing() {
           <span style={{ fontSize: 15, fontWeight: 700 }}>Dermify AI</span>
         </div>
         <p style={{ fontSize: 13, color: c.text3 }}>
-          © {new Date().getFullYear()} Dermify AI. AI-powered skincare analysis platform.
+          © {new Date().getFullYear()} Dermify AI. skincare analysis platform by Sumit K.
         </p>
       </footer>
 
